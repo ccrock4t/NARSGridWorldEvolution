@@ -25,7 +25,8 @@ public class AlpineGridManager : MonoBehaviour
         Water
     }
 
-
+    [SerializeField]
+    GameObject MLAgentsPrefab;
 
     public class Agent
     {
@@ -94,11 +95,16 @@ public class AlpineGridManager : MonoBehaviour
     private string _csvPath;
     private StreamWriter _csv;
 
+    const bool USE_ML_AGENTS = true;
 
     void Awake()
     {
         Instance = this;
-                table = new(AnimatTable.SortingRule.sorted,AnimatTable.ScoreType.objective_fitness);
+        table = new(AnimatTable.SortingRule.sorted,AnimatTable.ScoreType.objective_fitness);
+        if (USE_ML_AGENTS)
+        {
+            var mlagentsGO = Instantiate(MLAgentsPrefab);
+        }
     }
     // --- CSV logging ---
 

@@ -488,6 +488,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bcf661fe76b41604c8953a96fb099b88, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  MLAgentsPrefab: {fileID: 2044260879805581517, guid: 05910ce864fc4d04ab25f6073616a24b, type: 3}
   floorPrefab: {fileID: 5364120516538139519, guid: b27484e7de5583f43a49ddf6d58c430a, type: 3}
   wolfPrefab: {fileID: 6838011275962142117, guid: 421c732fd18ff904abcb4de87059eb3a, type: 3}
   goatPrefab: {fileID: 6838011275962142117, guid: 7d73f2b19c796204db54c9e5d28d4fcc, type: 3}

@@ -268,11 +268,11 @@ public class TemporalModule
             return null;
         }
 
-        if(predicate == energy_increasing)
-        {
-            int h = 1;
-            UnityEngine.Debug.LogError("generalization formed");
-        }
+        //if(predicate == energy_increasing)
+        //{
+        //    int h = 1;
+        //    UnityEngine.Debug.LogError("generalization formed");
+        //}
 
         new_statement = CreateContingencyStatement(new_S, new_M, predicate);
 
