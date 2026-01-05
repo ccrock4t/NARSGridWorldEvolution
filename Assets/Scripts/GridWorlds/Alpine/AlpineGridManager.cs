@@ -144,18 +144,33 @@ public class AlpineGridManager : MonoBehaviour
     {
        
         GenerateGrid();
-        InitCsv();
+      
         if (aiType == AIType.NARS)
         {
             BeginNarsEpisode();
-
+            InitNARSCsv();
         }
         else
         {
             StartCoroutine(StartPpoRoutine());
+            InitPPOCsv();
         }
     }
 
+    private void InitPPOCsv()
+    {
+        var stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+        var root = GetLogRootDirectory();
+
+
+        _csvPath = Path.Combine(root, $"stats_{stamp}.csv");
+        _csv = new StreamWriter(_csvPath, false);
+        _csv.WriteLine("cumulative_reward,movement,grass_eaten,berries_eaten,timesteps_alive");
+
+        _csv.Flush();
+
+        Debug.Log($"CSV logging to: {_csvPath}");
+    }
 
     public static bool READY = false;
     System.Collections.IEnumerator StartPpoRoutine()
@@ -183,7 +198,7 @@ public class AlpineGridManager : MonoBehaviour
     return Application.persistentDataPath;
 #endif
     }
-    void InitCsv()
+    void InitNARSCsv()
     {
         var stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
         var root = GetLogRootDirectory();
@@ -695,15 +710,22 @@ public class AlpineGridManager : MonoBehaviour
         if (type == TileType.Grass)
         {
             agent.body.energy = ENERGY_IN_GRASS;
+            agent.body.grass_eaten++;
             placedGrass--;
+        }
+        else if (type == TileType.Berry)
+        {
+            
+            agent.body.energy = ENERGY_IN_BERRY;
+            agent.body.berries_eaten++;
+            placedBerries--;
         }
         else
         {
-            agent.body.energy = ENERGY_IN_BERRY;
-            placedBerries--;
+            Debug.LogError("error");
         }
 
-        agent.body.food_eaten++;
+
         eatenType = type;
         return true;
     }
@@ -1015,6 +1037,31 @@ public class AlpineGridManager : MonoBehaviour
             high_score = cumulativeReward;
 
         UpdateUI();
+    }
+
+    float max_ppo_reward = 0;
+    public void WritePpoEpisodeRow(
+    int episode,
+    float cumulativeReward,
+    int movement,
+    int grassEaten,
+    int berriesEaten,
+    int timestepsAlive
+)
+    {
+        if (_csv == null) return;
+
+        max_ppo_reward = math.max(max_ppo_reward, cumulativeReward);
+        string line = string.Join(",",
+            max_ppo_reward.ToString(CultureInfo.InvariantCulture),
+            movement.ToString(CultureInfo.InvariantCulture),
+            grassEaten.ToString(CultureInfo.InvariantCulture),
+            berriesEaten.ToString(CultureInfo.InvariantCulture),
+            timestepsAlive.ToString(CultureInfo.InvariantCulture)
+        );
+
+        _csv.WriteLine(line);
+        _csv.Flush();
     }
 
 }

@@ -4,8 +4,7 @@ using Unity.MLAgents;
 
 public class PpoManualStepper : MonoBehaviour
 {
-    [SerializeField, Min(0.1f)]
-    private float stepsPerSecond = 5f;
+    private float stepsPerSecond = 100f;
 
     private Coroutine loop;
 

@@ -10,6 +10,6 @@ public class PPOBody : AgentBody
 
     public override float GetFitness()
     {
-        return food_eaten;
+        return grass_eaten;
     }
 }

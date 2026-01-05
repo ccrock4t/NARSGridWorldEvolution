@@ -36,8 +36,9 @@ public class NARSBody : AgentBody
     {
         if(type == TileType.Empty)
         {
-            return null;
-        }else if(type == TileType.Grass)
+            return NARSGenome.empty_seen_terms[direction];
+        }
+        else if(type == TileType.Grass)
         {
             return NARSGenome.grass_seen_terms[direction];
         }
@@ -45,10 +46,10 @@ public class NARSBody : AgentBody
         {
             return NARSGenome.berry_seen_terms[direction];
         }
-        else if (type == TileType.Goat)
-        {
-            return NARSGenome.goat_seen_terms[direction];
-        }
+        //else if (type == TileType.Goat)
+        //{
+        //    return NARSGenome.goat_seen_terms[direction];
+        //}
         else if (type == TileType.Water)
         {
             return NARSGenome.water_seen[direction];
@@ -59,9 +60,9 @@ public class NARSBody : AgentBody
  
     public override float GetFitness()
     {
-        if(food_eaten > 0)
+        if(grass_eaten > 0 || berries_eaten > 0)
         {
-            return food_eaten;
+            return PPOAgent.grassReward*grass_eaten + PPOAgent.berryReward*berries_eaten;
         }
         else
         {

@@ -90,7 +90,8 @@ public class NARSGenome
 
     public static Dictionary<Direction,StatementTerm> grass_seen_terms = new();
     public static Dictionary<Direction,StatementTerm> berry_seen_terms = new();
-    public static Dictionary<Direction, StatementTerm> goat_seen_terms = new();
+    public static Dictionary<Direction,StatementTerm> empty_seen_terms = new();
+   // public static Dictionary<Direction, StatementTerm> goat_seen_terms = new();
     public static Dictionary<Direction, StatementTerm> water_seen = new();
 
     public static StatementTerm energy_increasing;
@@ -196,14 +197,16 @@ public class NARSGenome
                 MOTOR_TERM_SET.Add(eat_op_terms[dir]);
 
                 grass_seen_terms.Add(dir, (StatementTerm)Term.from_string("(grass --> " + dir + ")"));
-                goat_seen_terms.Add(dir, (StatementTerm)Term.from_string("(goat --> " + dir + ")"));
+               // goat_seen_terms.Add(dir, (StatementTerm)Term.from_string("(goat --> " + dir + ")"));
                 berry_seen_terms.Add(dir, (StatementTerm)Term.from_string("(berry --> " + dir + ")"));
+                empty_seen_terms.Add(dir, (StatementTerm)Term.from_string("(empty --> " + dir + ")"));
                 //wolf_seen.Add(dir, (StatementTerm)Term.from_string("(wolf --> " + dir + ")"));
                 water_seen.Add(dir, (StatementTerm)Term.from_string("(water --> " + dir + ")"));
 
                 SENSORY_TERM_SET.Add(grass_seen_terms[dir]);
                 SENSORY_TERM_SET.Add(berry_seen_terms[dir]);
-                SENSORY_TERM_SET.Add(goat_seen_terms[dir]);
+                SENSORY_TERM_SET.Add(empty_seen_terms[dir]);
+               // SENSORY_TERM_SET.Add(goat_seen_terms[dir]);
                 //SENSORY_TERM_SET.Add(wolf_seen[dir]);
                 SENSORY_TERM_SET.Add(water_seen[dir]);
             }
@@ -629,7 +632,7 @@ public class NARSGenome
  
     public void AddNewRandomBelief()
     {
-        StatementTerm statement = CreateContingencyStatement(GetRandomSensoryTerm(), GetRandomMotorTerm(), GetRandomSensoryTerm());
+        StatementTerm statement = CreateContingencyStatement(GetRandomSensoryTerm(false), GetRandomMotorTerm(), GetRandomSensoryTerm(true));
         string statement_string = statement.ToString();
         if (!belief_statement_strings.ContainsKey(statement_string))
         {
@@ -677,7 +680,7 @@ public class NARSGenome
         if (rnd == 0)
         {
             // replace S
-            var randomS = GetRandomSensoryTerm();
+            var randomS = GetRandomSensoryTerm(false);
             if (M.contains_variable())
             {
                 randomS = new StatementTerm(randomS.get_subject_term(), new VariableTerm("x", VariableTerm.VariableType.Dependent), Copula.Inheritance);
@@ -699,7 +702,7 @@ public class NARSGenome
         else //if (rnd == 2)
         {
             // replace P
-            new_statement = CreateContingencyStatement(subject.subterms[0], subject.subterms[1], GetRandomSensoryTerm());
+            new_statement = CreateContingencyStatement(subject.subterms[0], subject.subterms[1], GetRandomSensoryTerm(true));
         }
 
        
@@ -714,11 +717,25 @@ public class NARSGenome
         this.beliefs[rnd_idx] = belief;
     }
 
-    public StatementTerm GetRandomSensoryTerm()
+    public StatementTerm GetRandomSensoryTerm(bool predicate)
     {
-        if (UnityEngine.Random.value < 0.05) return energy_increasing;
-        int rnd = UnityEngine.Random.Range(0, SENSORY_TERM_SET.Count);
-        return SENSORY_TERM_SET[rnd];
+        if (predicate) return energy_increasing;
+        
+        if (predicate) {
+            int rnd = UnityEngine.Random.Range(0, SENSORY_TERM_SET.Count);
+            return SENSORY_TERM_SET[rnd];
+        }
+        else
+        {
+            int rnd = UnityEngine.Random.Range(0, SENSORY_TERM_SET.Count - 1);
+            if(SENSORY_TERM_SET[rnd] == energy_increasing)
+            {
+                rnd++;
+                rnd = rnd % SENSORY_TERM_SET.Count;
+            }
+            return SENSORY_TERM_SET[rnd];
+        }
+       
     }
 
     public StatementTerm GetRandomMotorTerm()

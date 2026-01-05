@@ -17,11 +17,11 @@ public class PPOAgent : MLAgent
     private Vector2Int pos;
 
     // Per-step shaping (tune later)
-    [SerializeField] float stepPenalty = 0.001f;
-    [SerializeField] float deathPenalty = 1.0f;
+    public const float stepPenalty = 0.001f;
+    public const float deathPenalty = 1.0f;
 
-    [SerializeField] float grassReward = 1.0f;
-    [SerializeField] float berryReward = 2.0f;
+    public const float grassReward = 1.0f;
+    public const float berryReward = 2.0f;
 
     private int DirCount => CardinalDirs.Length;
 
@@ -42,7 +42,7 @@ public class PPOAgent : MLAgent
 
         // Reset internal body state (explicit episode)
         gridAgent.body.energy = AlpineGridManager.ENERGY_IN_GRASS;
-        gridAgent.body.food_eaten = 0;
+        gridAgent.body.grass_eaten = 0;
         gridAgent.body.movement = 0;
         gridAgent.body.remaining_life = AgentBody.MAX_LIFE;
         gridAgent.body.timesteps_alive = 0;
@@ -139,12 +139,24 @@ public class PPOAgent : MLAgent
         gridAgent.body.energy--;
         gridAgent.body.remaining_life--;
 
-        AddReward(-stepPenalty);
+       // AddReward(-stepPenalty);
 
         if (gridAgent.body.energy <= 0 || gridAgent.body.remaining_life <= 0 || gridAgent.body.timesteps_alive > AlpineGridManager.MAX_EPISODE_TIMESTEPS)
         {
-            grid.ReportPpoEpisodeResult(GetCumulativeReward());
-            //AddReward(-deathPenalty);
+            AddReward(((float)gridAgent.body.movement / gridAgent.body.timesteps_alive));
+            float cum = GetCumulativeReward();
+
+            grid.WritePpoEpisodeRow(
+                grid.episode,
+                cum,
+                gridAgent.body.movement,
+                gridAgent.body.grass_eaten,
+                gridAgent.body.berries_eaten,
+                gridAgent.body.timesteps_alive
+            );
+
+            grid.ReportPpoEpisodeResult(cum);
+      
             EndEpisode();
         }
 
@@ -158,4 +170,6 @@ public class PPOAgent : MLAgent
         da[0] = DirCount; // no eat
         da[1] = DirCount; // no move
     }
+
+
 }
