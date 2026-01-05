@@ -11,8 +11,7 @@ public class PpoManualStepper : MonoBehaviour
 
     void Awake()
     {
-        // Stop ML-Agents from stepping every FixedUpdate
-        Academy.Instance.AutomaticSteppingEnabled = false;
+
     }
 
     void OnEnable()
@@ -30,6 +29,12 @@ public class PpoManualStepper : MonoBehaviour
     {
         var wait = new WaitForSecondsRealtime(1f / stepsPerSecond);
 
+        while (!AlpineGridManager.READY)
+        {
+            yield return wait;
+        }
+        // Stop ML-Agents from stepping every FixedUpdate
+        Academy.Instance.AutomaticSteppingEnabled = false;
         while (true)
         {
             Academy.Instance.EnvironmentStep();

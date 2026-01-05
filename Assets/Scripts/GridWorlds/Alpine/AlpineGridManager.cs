@@ -156,12 +156,14 @@ public class AlpineGridManager : MonoBehaviour
         }
     }
 
+
+    public static bool READY = false;
     System.Collections.IEnumerator StartPpoRoutine()
     {
 
         yield return MlagentsTrainerLauncher.WaitForTrainerPort(MlagentsTrainerLauncher.BasePort, 20f);
-
         SpawnPpoAgentsRuntime(); // your method that adds PPOAgent + BehaviorParameters etc.
+        READY = true;
     }
 
     string GetLogRootDirectory()
@@ -285,6 +287,10 @@ public class AlpineGridManager : MonoBehaviour
 
             // 1) BehaviorParameters FIRST
             var bp = go.GetComponent<BehaviorParameters>();
+            Debug.Log($"BehaviorType={bp.BehaviorType} BehaviorName={bp.BehaviorName} " +
+            $"ActionSpec={bp.BrainParameters.ActionSpec.NumDiscreteActions} branches " +
+            $"sizes=({string.Join(",", bp.BrainParameters.ActionSpec.BranchSizes)})");
+            Debug.Log($"Model assigned? {(bp.Model != null)}");
             if (bp == null) bp = go.AddComponent<BehaviorParameters>();
 
             bp.BehaviorName = behaviorName;
@@ -1001,6 +1007,14 @@ public class AlpineGridManager : MonoBehaviour
         }
 
         r.SetPropertyBlock(mpb);
+    }
+    // AlpineGridManager.cs
+    public void ReportPpoEpisodeResult(float cumulativeReward)
+    {
+        if (cumulativeReward > high_score)
+            high_score = cumulativeReward;
+
+        UpdateUI();
     }
 
 }

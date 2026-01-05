@@ -143,7 +143,8 @@ public class PPOAgent : MLAgent
 
         if (gridAgent.body.energy <= 0 || gridAgent.body.remaining_life <= 0 || gridAgent.body.timesteps_alive > AlpineGridManager.MAX_EPISODE_TIMESTEPS)
         {
-            AddReward(-deathPenalty);
+            grid.ReportPpoEpisodeResult(GetCumulativeReward());
+            //AddReward(-deathPenalty);
             EndEpisode();
         }
 

@@ -1,26 +1,4 @@
 {
-    "AlpinePPO": {
-        "checkpoints": [
-            {
-                "steps": 0,
-                "file_path": "results\\ppo_standard_1\\AlpinePPO\\AlpinePPO-0.onnx",
-                "reward": null,
-                "creation_time": 1767590723.8685162,
-                "auxillary_file_paths": [
-                    "results\\ppo_standard_1\\AlpinePPO\\AlpinePPO-0.pt"
-                ]
-            }
-        ],
-        "final_checkpoint": {
-            "steps": 0,
-            "file_path": "results\\ppo_standard_1\\AlpinePPO.onnx",
-            "reward": null,
-            "creation_time": 1767590723.8685162,
-            "auxillary_file_paths": [
-                "results\\ppo_standard_1\\AlpinePPO\\AlpinePPO-0.pt"
-            ]
-        }
-    },
     "metadata": {
         "stats_format_version": "0.3.0",
         "mlagents_version": "1.1.0",
