@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using TMPro;
 using Unity.Mathematics;
+using Unity.MLAgents;
 using Unity.VisualScripting;
 using Unity.VisualScripting.FullSerializer;
 using UnityEditor;
@@ -14,38 +15,61 @@ using static AlpineGridManager;
 using static Directions;
 using static UnityEngine.EventSystems.EventTrigger;
 using Random = UnityEngine.Random;
+using Unity.MLAgents.Policies;
+using Unity.MLAgents.Actuators;
+
 
 public class AlpineGridManager : MonoBehaviour
 {
+
     public enum TileType
     {
         Empty,
         Goat,  
         Grass,
+        Berry,
         Water
     }
+
+    public enum AIType
+    {
+        NARS,
+        PPO
+    }
+
+    [Header("PPO Runtime Spawn")]
+    [SerializeField] int ppoAgentCount = 1;
+    [SerializeField] string behaviorName = "AlpinePPO";  // MUST match YAML behaviors: key
+
 
     [SerializeField]
     GameObject MLAgentsPrefab;
 
-    public class Agent
+    [NonSerialized]
+    public AIType aiType = AIType.PPO;
+
+    public class AIAgent
+    {
+        public AgentBody body;
+    }
+
+    public class NARSAgent : AIAgent
     {
         public NARSGenome genome;
         public NARS nars;
-        public NARSBody narsBody;
 
-        public Agent()
+        public NARSAgent()
         {
             genome = new NARSGenome();
             nars = new NARS(genome);
-            narsBody = new(nars);
+            this.body = new NARSBody(nars);
         }
 
-        public Agent(NARSGenome genome)
+        public NARSAgent(NARSGenome genome)
         {
             this.genome = genome;
             nars = new NARS(genome);
-            narsBody = new(nars);
+            this.body = new NARSBody(nars);
         }
     }
 
@@ -57,6 +81,7 @@ public class AlpineGridManager : MonoBehaviour
     public GameObject floorPrefab;
     public GameObject wolfPrefab;
     public GameObject goatPrefab;
+    public GameObject ppoAgentPrefab;
     public GameObject grassPrefab;
     public GameObject waterPrefab;
 
@@ -66,28 +91,36 @@ public class AlpineGridManager : MonoBehaviour
     public TileType[,] grid;
     public GameObject[,] gridGameobjects; // tracks the single occupant for each tile
 
-    Dictionary<Agent, Vector2Int> agentToPos = new();
+    Dictionary<AIAgent, Vector2Int> agentToPos = new();
+    List<(Vector2Int, AIAgent)> actor_locations = new();
 
     public static AlpineGridManager Instance;
 
+    public int episode = 0; // PPO episode counter
     public int timestep = 0;
     public float high_score;
     public int largest_genome;
 
     // --- Tick settings ---
-    public const int ENERGY_IN_FOOD = 10;
-
+    public const int ENERGY_IN_GRASS = 10;
+    public const int ENERGY_IN_BERRY = 20;
 
     // How many FixedUpdate steps per simulation tick
-    private int updatesPerTick = 5;
+    private int fixedUpdatesPerSimulationTick = 5;
 
     private int _fixedUpdateCounter = 0;
+    public const int MAX_EPISODE_TIMESTEPS = 100;
 
-
-    public const int NUM_OF_NARS_AGENTS = 25;
+    public const int NUM_OF_AGENTS = 1;
     public const int NUM_OF_GRASS = 200;
+    public const int NUM_OF_BERRIES = 50;
+
+    int placedGrass = 0;
+    int placedBerries = 0;
+
     AnimatTable table;
 
+    public TMP_Text episodeTXT;
     public TMP_Text timestepTXT;
     public TMP_Text scoreTXT;
     public TMP_Text genomeSizeTXT;
@@ -95,26 +128,40 @@ public class AlpineGridManager : MonoBehaviour
     private string _csvPath;
     private StreamWriter _csv;
 
-    const bool USE_ML_AGENTS = true;
 
     void Awake()
     {
         Instance = this;
         table = new(AnimatTable.SortingRule.sorted,AnimatTable.ScoreType.objective_fitness);
-        if (USE_ML_AGENTS)
+        if (aiType != AIType.NARS)
         {
             var mlagentsGO = Instantiate(MLAgentsPrefab);
         }
     }
+
     // --- CSV logging ---
-
-
-
     void Start()
     {
+       
         GenerateGrid();
-        GenerateInitialObjectLayout();
-        InitCsv();   // <-- add this
+        InitCsv();
+        if (aiType == AIType.NARS)
+        {
+            BeginNarsEpisode();
+
+        }
+        else
+        {
+            StartCoroutine(StartPpoRoutine());
+        }
+    }
+
+    System.Collections.IEnumerator StartPpoRoutine()
+    {
+
+        yield return MlagentsTrainerLauncher.WaitForTrainerPort(MlagentsTrainerLauncher.BasePort, 20f);
+
+        SpawnPpoAgentsRuntime(); // your method that adds PPOAgent + BehaviorParameters etc.
     }
 
     string GetLogRootDirectory()
@@ -227,6 +274,47 @@ public class AlpineGridManager : MonoBehaviour
         }
     }
 
+    void SpawnPpoAgentsRuntime()
+    {
+        var prefab = ppoAgentPrefab;
+
+        for (int i = 0; i < ppoAgentCount; i++)
+        {
+            var go = Instantiate(prefab);
+            go.name = $"PPOAgent_{i}";
+
+            // 1) BehaviorParameters FIRST
+            var bp = go.GetComponent<BehaviorParameters>();
+            if (bp == null) bp = go.AddComponent<BehaviorParameters>();
+
+            bp.BehaviorName = behaviorName;
+            bp.BehaviorType = BehaviorType.Default;
+
+            int dirCount = Directions.CardinalDirs.Length;
+            int obsSize = dirCount * 4 + 2;
+
+            bp.BrainParameters.VectorObservationSize = obsSize;
+            bp.BrainParameters.NumStackedVectorObservations = 1;
+            bp.BrainParameters.ActionSpec = ActionSpec.MakeDiscrete(new int[]
+            {
+            dirCount + 1,
+            dirCount + 1
+            });
+
+            // 2) DecisionRequester next (fine either way, but keep it before agent if possible)
+            var dr = go.GetComponent<DecisionRequester>();
+            if (dr == null) dr = go.AddComponent<DecisionRequester>();
+            dr.DecisionPeriod = 1;
+            dr.TakeActionsBetweenDecisions = true;
+
+            // 3) Agent LAST (so Awake sees correct spec)
+            var agent = go.GetComponent<PPOAgent>();
+            if (agent == null) agent = go.AddComponent<PPOAgent>();
+        }
+    }
+
+
+
     void OnApplicationQuit()
     {
         OnDestroy(); // ensure it’s closed on quit, too
@@ -234,40 +322,94 @@ public class AlpineGridManager : MonoBehaviour
 
     public void UpdateUI()
     {
-        timestepTXT.text = "Timestep: " + timestep;
-        scoreTXT.text = "High Score: " + high_score;
-        genomeSizeTXT.text = "Largest genome: " + largest_genome;
+        if (episodeTXT != null) episodeTXT.text = "Episode: " + episode;
+        if (timestepTXT != null) timestepTXT.text = "Timestep: " + timestep;
+        if (scoreTXT != null) scoreTXT.text = "High Score: " + high_score;
+        if (genomeSizeTXT != null) genomeSizeTXT.text = "Largest genome: " + largest_genome;
     }
+
+    public void BeginPpoEpisode()
+    {
+        episode++;
+        timestep = 0;
+
+        Debug.Log($"[PPO] Episode {episode} begin");
+
+        // Update UI immediately so you see the reset
+        UpdateUI();
+    }
+
+    public void PpoStepTick()
+    {
+        timestep++;
+        if (timestepTXT != null)
+            timestepTXT.text = "Timestep: " + timestep;
+    }
+
 
     void FixedUpdate()
     {
+        if (aiType != AIType.NARS) return;
         _fixedUpdateCounter++;
 
-        if (_fixedUpdateCounter >= updatesPerTick)
+        if (_fixedUpdateCounter >= fixedUpdatesPerSimulationTick)
         {
             _fixedUpdateCounter = 0;   // reset for next tick
             timestep++;
 
             StepSimulation();
 
-            int guard = 0;
-            while (agentToPos.Count < NUM_OF_NARS_AGENTS)
+            // ---- Episodic NARS: end conditions + NO respawns mid-episode ----
+            if (aiType == AIType.NARS)
             {
-                if (!SpawnNewAgent()) break;
-                if (++guard > 2000) break; // extra safety guard
+                if (agentToPos.Count == 0)
+                {
+                    EndNarsEpisode("all dead");
+                    return;
+                }
+
+                if (timestep >= MAX_EPISODE_TIMESTEPS)
+                {
+                    EndNarsEpisode("time limit");
+                    return;
+                }
             }
-            guard = 0;
-            while (placedGrass < NUM_OF_GRASS)
+            else
             {
-                if (!SpawnNewGrass()) break;
-                if (++guard > 2000) break; // extra safety guard
+                // ---- Old continuous behavior (keeps densities constant) ----
+                int guard = 0;
+                while (agentToPos.Count < NUM_OF_AGENTS)
+                {
+                    if (!SpawnNewAgent()) break;
+                    if (++guard > 2000) break;
+                }
+                guard = 0;
+                while (placedGrass < NUM_OF_GRASS)
+                {
+                    if (!SpawnNewGrass()) break;
+                    if (++guard > 2000) break;
+                }
+                guard = 0;
+                while (placedBerries < NUM_OF_BERRIES)
+                {
+                    if (!SpawnNewBerry()) break;
+                    if (++guard > 2000) break;
+                }
             }
 
+
             UpdateUI();
-            WriteCsvRow();   // still runs on each tick
+
         }
     }
 
+    private bool SpawnNewBerry()
+    {
+        if (!TryFindRandomEmptyCell(out var berryPos)) return false;
+        if (!PlaceObject(grassPrefab, berryPos, TileType.Berry, Color.red)) return false;
+        placedBerries++;
+        return true;
+    }
 
     private bool SpawnNewGrass()
     {
@@ -288,7 +430,7 @@ public class AlpineGridManager : MonoBehaviour
             if (!TryFindRandomEmptyCell(out var pos)) return false;
             if (!PlaceObject(goatPrefab, pos, TileType.Goat)) return false;
 
-            var agent = new Agent();
+            var agent = new NARSAgent();
             agentToPos.Add(agent, pos);
             placedAny = true;
         }
@@ -302,7 +444,7 @@ public class AlpineGridManager : MonoBehaviour
                 if (!TryFindRandomEmptyCell(out var pos)) return placedAny; // no more room
                 if (!PlaceObject(goatPrefab, pos, TileType.Goat)) continue;
 
-                var agent = new Agent(genome);
+                var agent = new NARSAgent(genome);
                 agentToPos.Add(agent, pos);
                 placedAny = true;
             }
@@ -344,17 +486,20 @@ public class AlpineGridManager : MonoBehaviour
         return false;
     }
 
-    // Overwrite your PlaceObject to be "safe" (no clearing/replacing).
-    // If you prefer, keep the original and add this as TryPlaceObject(...) instead.
-    bool PlaceObject(GameObject prefab, Vector2Int gridPos, TileType type)
+    bool PlaceObject(GameObject prefab, Vector2Int gridPos, TileType type, Color? tint = null)
     {
         if (!IsCellEmpty(gridPos)) return false;
 
         var obj = Instantiate(prefab, new Vector3(gridPos.x, gridPos.y, 0f), Quaternion.identity);
+
+        if (tint.HasValue)
+            ApplyTint(obj, tint.Value);
+
         gridGameobjects[gridPos.x, gridPos.y] = obj;
         grid[gridPos.x, gridPos.y] = type;
         return true;
     }
+
 
     // --------------------------------------------------
     //  GRID CREATION
@@ -376,29 +521,9 @@ public class AlpineGridManager : MonoBehaviour
     // --------------------------------------------------
     //  MAIN LAYOUT
     // --------------------------------------------------
-    int placedGrass = 0;
-    void GenerateInitialObjectLayout()
-    {
-        int placedWater = 0;
-        while (placedGrass < NUM_OF_GRASS && TryFindRandomEmptyCell(out var grassPos))
-            if (PlaceObject(grassPrefab, grassPos, TileType.Grass)) placedGrass++;
 
-        while (placedWater < 100 && TryFindRandomEmptyCell(out var waterPos))
-            if (PlaceObject(waterPrefab, waterPos, TileType.Water)) placedWater++;
 
-        int spawned = 0;
-        while (spawned < NUM_OF_NARS_AGENTS && TryFindRandomEmptyCell(out var goatPos))
-        {
-            if (PlaceObject(goatPrefab, goatPos, TileType.Goat))
-            {
-                var agent = new Agent();
-                agentToPos.Add(agent, goatPos);
-                spawned++;
-            }
-        }
-    }
 
-    List<(Vector2Int, Agent)> actor_locations = new();
     // --------------------------------------------------
     //  SIMULATION STEP
     // --------------------------------------------------
@@ -412,28 +537,32 @@ public class AlpineGridManager : MonoBehaviour
             var agent_pos = agentToPos[key];
             var agent = key;
 
-            if (agent.narsBody.energy <= 0 || agent.narsBody.remaining_life <= 0)
+            if (agent.body.energy <= 0 || agent.body.remaining_life <= 0)
             {
                 KillAgent(agent,agent_pos);
             }
             else
             {
                 actor_locations.Add((agent_pos, agent));
-                for (int i =0; i<4; i++)
+                if(agent is NARSAgent narsAgent)
                 {
-                    agent.narsBody.Sense(agent_pos, this);
-                    // enter instinctual goals
-                    foreach (var goal_data in agent.nars.genome.goals)
+                    for (int i = 0; i < 4; i++)
                     {
-                        var goal = new Goal(agent.nars, goal_data.statement, goal_data.evidence, occurrence_time: agent.nars.current_cycle_number);
-                        agent.nars.SendInput(goal);
+                        agent.body.Sense(agent_pos, this);
+                        // enter instinctual goals
+                        foreach (var goal_data in narsAgent.nars.genome.goals)
+                        {
+                            var goal = new Goal(narsAgent.nars, goal_data.statement, goal_data.evidence, occurrence_time: narsAgent.nars.current_cycle_number);
+                            narsAgent.nars.SendInput(goal);
+                        }
+                        narsAgent.nars.do_working_cycle();
                     }
-                    agent.nars.do_working_cycle();
                 }
 
-                agent.narsBody.timesteps_alive++;
-                agent.narsBody.energy--;
-                agent.narsBody.remaining_life--;
+
+                agent.body.timesteps_alive++;
+                agent.body.energy--;
+                agent.body.remaining_life--;
 
             }
         }   
@@ -452,75 +581,85 @@ public class AlpineGridManager : MonoBehaviour
             var type = grid[fromLocation.x, fromLocation.y];
             if (!IsAgent(type)) continue;
 
-            // try eat
-            Direction? dirtoeat = null;
-            float max_eat_activation = 0.0f;
-
-            foreach (var kvp in NARSGenome.eat_op_terms)
+            if (agent is NARSAgent narsAgent)
             {
-                var eatTerm = kvp.Value;
-                float activation = agent.nars.GetGoalActivation(eatTerm);
-                if (activation < agent.nars.config.T) continue;
-                if(activation > max_eat_activation)
-                {
-                    dirtoeat = kvp.Key;
-                }
-              
+                NARSMotorStep(fromLocation, narsAgent);
             }
-
-            if(dirtoeat != null)
-            {
-                var eatLocation = fromLocation + GetMovementVectorFromDirection((Direction)dirtoeat);
-                TryEatEntity(agent, eatLocation);
-            }
-
-            // try moves
-            Direction? dirtomove = null;
-            float max_move_activation = 0.0f;
- 
-            foreach(var kvp in NARSGenome.move_op_terms)
-            {
-                var moveTerm = kvp.Value;
-                float activation = agent.nars.GetGoalActivation(moveTerm);
-                if (activation < agent.nars.config.T) continue;
-                if (activation > max_move_activation)
-                {
-                    dirtomove = kvp.Key;
-                    max_move_activation = activation;
-                }
-            }
-
-
-            if (dirtomove != null)
-            {
-                var toLocation = fromLocation + GetMovementVectorFromDirection((Direction)dirtomove);
-                MoveEntity(fromLocation, toLocation, agent);
-            }
-    
-
 
         }
     }
 
-
-
-    void KillAgent(Agent agent, Vector2Int agentPos)
+    void NARSMotorStep(Vector2Int fromLocation, NARSAgent narsAgent)
     {
-        grid[agentPos.x, agentPos.y] = TileType.Empty;
-        var score = agent.narsBody.GetFitness();
-        table.TryAdd(score, agent.genome);
-        if(score > high_score)
+        // try eat
+        Direction? dirtoeat = null;
+        float max_eat_activation = 0.0f;
+
+        foreach (var kvp in NARSGenome.eat_op_terms)
         {
-            high_score = score;
-            UpdateUI();
+            var eatTerm = kvp.Value;
+            float activation = narsAgent.nars.GetGoalActivation(eatTerm);
+            if (activation < narsAgent.nars.config.T) continue;
+            if (activation > max_eat_activation)
+            {
+                dirtoeat = kvp.Key;
+            }
+
         }
 
-        if(agent.genome.beliefs.Count > largest_genome)
+        if (dirtoeat != null)
         {
-            largest_genome = agent.genome.beliefs.Count;
-            UpdateUI();
+            var eatLocation = fromLocation + GetMovementVectorFromDirection((Direction)dirtoeat);
+            TryEatEntity(narsAgent, eatLocation, out _);
         }
-     
+
+        // try moves
+        Direction? dirtomove = null;
+        float max_move_activation = 0.0f;
+
+        foreach (var kvp in NARSGenome.move_op_terms)
+        {
+            var moveTerm = kvp.Value;
+            float activation = narsAgent.nars.GetGoalActivation(moveTerm);
+            if (activation < narsAgent.nars.config.T) continue;
+            if (activation > max_move_activation)
+            {
+                dirtomove = kvp.Key;
+                max_move_activation = activation;
+            }
+        }
+
+        if (dirtomove != null)
+        {
+            var toLocation = fromLocation + GetMovementVectorFromDirection((Direction)dirtomove);
+            MoveEntity(fromLocation, toLocation, narsAgent);
+        }
+    }
+
+
+    void KillAgent(AIAgent agent, Vector2Int agentPos)
+    {
+
+        grid[agentPos.x, agentPos.y] = TileType.Empty;
+
+        if(agent is NARSAgent narsAgent)
+        {
+            float score = agent.body.GetFitness();
+            table.TryAdd(score, narsAgent.genome);
+            if (score > high_score)
+            {
+                high_score = score;
+                UpdateUI();
+            }
+
+            if (narsAgent.genome.beliefs.Count > largest_genome)
+            {
+                largest_genome = narsAgent.genome.beliefs.Count;
+                UpdateUI();
+            }
+
+        }
+
         ClearTileAt(agentPos);
         agentToPos.Remove(agent);
     }
@@ -535,54 +674,237 @@ public class AlpineGridManager : MonoBehaviour
     {
         return (t == TileType.Goat);
     }
-    private void TryEatEntity(Agent agent, Vector2Int eatLocation)
+    public bool TryEatEntity(AIAgent agent, Vector2Int eatLocation, out TileType eatenType)
     {
-        if (!IsInBounds(eatLocation)) return;
+        eatenType = TileType.Empty;
+
+        if (!IsInBounds(eatLocation)) return false;
+
         var type = grid[eatLocation.x, eatLocation.y];
-        if (type != TileType.Grass)
-        {
-            //eat failed
-            return;
-        }
+        if (type != TileType.Grass && type != TileType.Berry)
+            return false;
 
         ClearTileAt(eatLocation);
-        agent.narsBody.energy = ENERGY_IN_FOOD;
-        agent.narsBody.food_eaten++;
-        placedGrass--;
-        var ev = new Judgment(agent.nars, NARSGenome.energy_increasing, new(1.0f, 0.99f), occurrence_time: agent.nars.current_cycle_number);
-        agent.nars.SendInput(ev);
+
+        if (type == TileType.Grass)
+        {
+            agent.body.energy = ENERGY_IN_GRASS;
+            placedGrass--;
+        }
+        else
+        {
+            agent.body.energy = ENERGY_IN_BERRY;
+            placedBerries--;
+        }
+
+        agent.body.food_eaten++;
+        eatenType = type;
+        return true;
     }
-    void MoveEntity(Vector2Int from, Vector2Int to, Agent agent)
+
+
+    public bool MoveEntity(Vector2Int from, Vector2Int to, AIAgent agent)
     {
-        if (!IsInBounds(to)) return;
-        if (to == from) return;
-      
+        if (!IsInBounds(to)) return false;
+        if (to == from) return false;
+
         var to_type = grid[to.x, to.y];
         if (IsBlocked(to_type))
-        {
-            //move failed
-            return;
-        }
+            return false;
+
         var from_type = grid[from.x, from.y];
-        agent.narsBody.movement++;
-        // Update transform
+
+        agent.body.movement++;
+
         var obj = gridGameobjects[from.x, from.y];
+        if (obj == null)
+            return false;
+
         obj.transform.position = new Vector3(to.x, to.y, 0f);
 
-        // Update tracking arrays
         gridGameobjects[to.x, to.y] = obj;
         gridGameobjects[from.x, from.y] = null;
 
         grid[to.x, to.y] = from_type;
         grid[from.x, from.y] = TileType.Empty;
 
-        agentToPos[agent] = to;
+        // Only update agentToPos if this is a NARS agent tracked in the dict
+        if (agentToPos.ContainsKey(agent))
+            agentToPos[agent] = to;
+
+        return true;
     }
+
+    public void ClearCellWithoutDestroy(Vector2Int pos)
+    {
+        if (!IsInBounds(pos)) return;
+
+        gridGameobjects[pos.x, pos.y] = null;
+        grid[pos.x, pos.y] = TileType.Empty;
+    }
+
+    public void PlaceExistingAgentObject(GameObject agentGO, Vector2Int pos, TileType type)
+    {
+        if (!IsInBounds(pos)) return;
+
+        gridGameobjects[pos.x, pos.y] = agentGO;
+        grid[pos.x, pos.y] = type;
+        agentGO.transform.position = new Vector3(pos.x, pos.y, 0f);
+    }
+
+    public void BeginNarsEpisode()
+    {
+        episode++;
+        timestep = 0;
+
+        Debug.Log($"[NARS] Episode {episode} begin");
+        UpdateUI();
+
+        // Reset the environment (destroy all non-floor occupants)
+        ResetNarsEpisodeLayout();
+
+        // Spawn a fresh episode population + resources
+        int guard = 0;
+
+        while (placedGrass < NUM_OF_GRASS)
+        {
+            if (!SpawnNewGrass()) break;
+            if (++guard > 5000) break;
+        }
+
+        guard = 0;
+        while (placedBerries < NUM_OF_BERRIES)
+        {
+            if (!SpawnNewBerry()) break;
+            if (++guard > 5000) break;
+        }
+
+        int placedWater = 0;
+        guard = 0;
+        while (placedWater < 100 && TryFindRandomEmptyCell(out var waterPos))
+        {
+            if (PlaceObject(waterPrefab, waterPos, TileType.Water)) placedWater++;
+            if (++guard > 5000) break;
+        }
+
+        guard = 0;
+        while (agentToPos.Count < NUM_OF_AGENTS)
+        {
+            if (!SpawnOneNarsAgent()) break;
+            if (++guard > 5000) break;
+        }
+
+        UpdateUI();
+    }
+    public void EndNarsEpisode(string reason)
+    {
+        Debug.Log($"[NARS] Episode {episode} end ({reason}) | timestep={timestep} | alive={agentToPos.Count}");
+
+        // Score/record survivors too (otherwise time-limit episodes never add to table)
+        var keys = agentToPos.Keys.ToArray();
+        foreach (var a in keys)
+        {
+            var p = agentToPos[a];
+            KillAgent(a, p);
+        }
+
+        // Log ONE row per episode (table now includes this episode's results)
+        WriteCsvRow();
+
+        // Start next episode immediately
+        BeginNarsEpisode();
+    }
+
+    // Clears everything except the floor (since floor isn't tracked in gridGameobjects)
+    void ResetNarsEpisodeLayout()
+    {
+        // Destroy all occupants
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                if (gridGameobjects[x, y] != null)
+                {
+                    Destroy(gridGameobjects[x, y]);
+                    gridGameobjects[x, y] = null;
+                }
+                grid[x, y] = TileType.Empty;
+            }
+        }
+
+        agentToPos.Clear();
+        actor_locations.Clear();
+
+        placedGrass = 0;
+        placedBerries = 0;
+    }
+
+    bool SpawnOneNarsAgent()
+    {
+        if (!TryFindRandomEmptyCell(out var pos)) return false;
+        if (!PlaceObject(goatPrefab, pos, TileType.Goat)) return false;
+
+        NARSGenome genome;
+
+        int newagent = UnityEngine.Random.Range(0, 50);
+        if (newagent == 0 || table.Count() < 2)
+        {
+            genome = new NARSGenome();
+        }
+        else
+        {
+            bool sexual = UnityEngine.Random.Range(0, 2) == 1;
+            var offspring = GetNewAnimatReproducedFromTable(sexual);
+            genome = offspring[0]; // ensure we only add ONE agent
+        }
+
+        var agent = new NARSAgent(genome);
+        agentToPos.Add(agent, pos);
+        return true;
+    }
+
+
+    public void ResetEpisodeLayout(GameObject agentGO)
+    {
+        // Clear all non-floor occupants, but do not destroy the agent GO
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                var obj = gridGameobjects[x, y];
+                if (obj != null && obj != agentGO)
+                    Destroy(obj);
+
+                gridGameobjects[x, y] = null;
+                grid[x, y] = TileType.Empty;
+            }
+        }
+
+        placedGrass = 0;
+        placedBerries = 0;
+
+        // Re-spawn a fresh layout
+        int placedWater = 0;
+
+        while (placedGrass < NUM_OF_GRASS && TryFindRandomEmptyCell(out var grassPos))
+            if (PlaceObject(grassPrefab, grassPos, TileType.Grass)) placedGrass++;
+
+        while (placedBerries < NUM_OF_BERRIES && TryFindRandomEmptyCell(out var berryPos))
+            if (PlaceObject(grassPrefab, berryPos, TileType.Berry, Color.red)) placedBerries++;
+
+        while (placedWater < 100 && TryFindRandomEmptyCell(out var waterPos))
+            if (PlaceObject(waterPrefab, waterPos, TileType.Water)) placedWater++;
+    }
+
 
     public bool IsBlocked(TileType type)
     {
-        return type == TileType.Water || type == TileType.Goat || type == TileType.Grass;
+        return type == TileType.Water
+            || type == TileType.Goat
+            || type == TileType.Grass
+            || type == TileType.Berry;
     }
+
 
     public static bool IsInBounds(Vector2Int p)
     {
@@ -652,6 +974,33 @@ public class AlpineGridManager : MonoBehaviour
         int index = Random.Range(0, values.Length);  // using UnityEngine.Random
         Direction randomDir = (Direction)values.GetValue(index);
         return randomDir.ToString();
+    }
+
+    void ApplyTint(GameObject obj, Color tint)
+    {
+        // 2D sprites
+        var sr = obj.GetComponent<SpriteRenderer>();
+        if (sr != null)
+        {
+            sr.color = tint;
+            return;
+        }
+
+        // 3D renderer (use MPB so you don't permanently modify shared material)
+        var r = obj.GetComponent<Renderer>();
+        if (r == null) return;
+
+        var mpb = new MaterialPropertyBlock();
+        r.GetPropertyBlock(mpb);
+
+        // common shader color properties
+        if (r.sharedMaterial != null)
+        {
+            if (r.sharedMaterial.HasProperty("_Color")) mpb.SetColor("_Color", tint);
+            if (r.sharedMaterial.HasProperty("_BaseColor")) mpb.SetColor("_BaseColor", tint);
+        }
+
+        r.SetPropertyBlock(mpb);
     }
 
 }

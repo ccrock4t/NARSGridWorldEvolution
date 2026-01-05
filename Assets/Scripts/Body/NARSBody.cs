@@ -5,22 +5,19 @@ using UnityEngine;
 using static AlpineGridManager;
 using static Directions;
 
-public class NARSBody
+public class NARSBody : AgentBody
 {
     static IEnumerable<Direction> _directions;
     public NARS nars;
-    public int timesteps_alive = 0;
-    public int energy = ENERGY_IN_FOOD;
-    public int food_eaten = 0;
-    public int movement = 0;
-    public const int MAX_LIFE = 100;
-    public int remaining_life = MAX_LIFE;
+
+
+
     public NARSBody(NARS nars)
     {
         this.nars = nars;
     }
 
-    public void Sense(Vector2Int position, AlpineGridManager gridManager)
+    public override void Sense(Vector2Int position, AlpineGridManager gridManager)
     {
         if (_directions == null) _directions = Enum.GetValues(typeof(Direction)).Cast<Direction>();
         foreach (var direction in _directions)
@@ -33,11 +30,9 @@ public class NARSBody
             var sensation = new Judgment(this.nars, sensor_term, new(1.0f, 0.99f), nars.current_cycle_number);
             nars.SendInput(sensation);
         }
-
-
     }
 
-    public StatementTerm GetSensorTermForTileTypeAndDirection(TileType type, Direction direction)
+    public static StatementTerm GetSensorTermForTileTypeAndDirection(TileType type, Direction direction)
     {
         if(type == TileType.Empty)
         {
@@ -45,6 +40,10 @@ public class NARSBody
         }else if(type == TileType.Grass)
         {
             return NARSGenome.grass_seen_terms[direction];
+        }
+        else if (type == TileType.Berry)
+        {
+            return NARSGenome.berry_seen_terms[direction];
         }
         else if (type == TileType.Goat)
         {
@@ -58,7 +57,7 @@ public class NARSBody
     }
 
  
-    public float GetFitness()
+    public override float GetFitness()
     {
         if(food_eaten > 0)
         {

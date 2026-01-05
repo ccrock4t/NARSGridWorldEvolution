@@ -89,6 +89,7 @@ public class NARSGenome
     public static Dictionary<Direction, StatementTerm> eat_op_terms = new();
 
     public static Dictionary<Direction,StatementTerm> grass_seen_terms = new();
+    public static Dictionary<Direction,StatementTerm> berry_seen_terms = new();
     public static Dictionary<Direction, StatementTerm> goat_seen_terms = new();
     public static Dictionary<Direction, StatementTerm> water_seen = new();
 
@@ -196,10 +197,12 @@ public class NARSGenome
 
                 grass_seen_terms.Add(dir, (StatementTerm)Term.from_string("(grass --> " + dir + ")"));
                 goat_seen_terms.Add(dir, (StatementTerm)Term.from_string("(goat --> " + dir + ")"));
+                berry_seen_terms.Add(dir, (StatementTerm)Term.from_string("(berry --> " + dir + ")"));
                 //wolf_seen.Add(dir, (StatementTerm)Term.from_string("(wolf --> " + dir + ")"));
                 water_seen.Add(dir, (StatementTerm)Term.from_string("(water --> " + dir + ")"));
 
                 SENSORY_TERM_SET.Add(grass_seen_terms[dir]);
+                SENSORY_TERM_SET.Add(berry_seen_terms[dir]);
                 SENSORY_TERM_SET.Add(goat_seen_terms[dir]);
                 //SENSORY_TERM_SET.Add(wolf_seen[dir]);
                 SENSORY_TERM_SET.Add(water_seen[dir]);

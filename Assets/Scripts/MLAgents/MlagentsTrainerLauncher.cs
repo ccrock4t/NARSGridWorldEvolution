@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Sockets;
 using UnityEditor;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
@@ -8,7 +9,7 @@ using Debug = UnityEngine.Debug;
 public static class MlagentsTrainerLauncher
 {
     // Change these to match your setup
-    const string EnvName = "mlagents";
+    const string EnvName = "mlagents110";
     const string ConfigRelativePath = "config/ppo_standard.yaml";
     const string RunId = "ppo_standard_1";
 
@@ -19,6 +20,16 @@ public static class MlagentsTrainerLauncher
     static string CondaBatPath => @"C:\Users\hahm.19\AppData\Local\anaconda3\condabin\conda.bat";
 
     static Process _proc;
+    public const int BasePort = 5004;
+
+
+    static string GetEnvPythonExe()
+    {
+        // CondaBatPath = ...\anaconda3\condabin\conda.bat
+        // python.exe      ...\anaconda3\envs\<EnvName>\python.exe
+        var condaRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(CondaBatPath)!, "..")); // condabin -> anaconda3
+        return Path.Combine(condaRoot, "envs", EnvName, "python.exe");
+    }
 
     [MenuItem("ML-Agents/Start PPO Trainer")]
     public static void StartTrainer()
@@ -32,22 +43,23 @@ public static class MlagentsTrainerLauncher
         string projectRoot = Directory.GetParent(Application.dataPath)!.FullName;
         string configPath = Path.GetFullPath(Path.Combine(projectRoot, ConfigRelativePath));
 
-        if (!File.Exists(CondaBatPath))
-            throw new FileNotFoundException($"conda.bat not found at: {CondaBatPath}");
+        var pythonExe = GetEnvPythonExe();
+        if (!File.Exists(pythonExe))
+            throw new FileNotFoundException($"python.exe not found at: {pythonExe}");
 
-        if (!File.Exists(configPath))
-            throw new FileNotFoundException($"Config not found at: {configPath}");
+        // -u => unbuffered output so your RedirectStandardOutput shows logs immediately
+        string arguments =
+            $"-u -m mlagents.trainers.learn \"{configPath}\" " +
+            $"--run-id {RunId} --force --base-port {BasePort}";
 
-        // Use conda run so we don't need to "activate" anything.
-        // We call conda.bat via cmd.exe.
-        string args =
-            $"/c \"call {Q(CondaBatPath)} run -n {EnvName} " +
-            $"mlagents-learn {Q(configPath)} --run-id {RunId} --force\"";
+        Debug.Log($"Starting ML-Agents trainer on base port {BasePort}...");
+        Debug.Log($"Trainer python: {pythonExe}");
+        Debug.Log($"Trainer args:   {arguments}");
 
         var psi = new ProcessStartInfo
         {
-            FileName = "cmd.exe",
-            Arguments = args,
+            FileName = pythonExe,
+            Arguments = arguments,
             WorkingDirectory = projectRoot,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -55,10 +67,13 @@ public static class MlagentsTrainerLauncher
             CreateNoWindow = true,
         };
 
+        // Extra belt-and-suspenders: ensure unbuffered streams
+        psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+
         _proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _proc.OutputDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Debug.Log(e.Data); };
-        _proc.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Debug.LogError(e.Data); };
-        _proc.Exited += (_, __) => Debug.Log("ML-Agents trainer exited.");
+        _proc.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Debug.LogWarning(e.Data); };
+        _proc.Exited += (_, __) => Debug.Log($"ML-Agents trainer exited. code={_proc.ExitCode}");
 
         _proc.Start();
         _proc.BeginOutputReadLine();
@@ -98,6 +113,41 @@ public static class MlagentsTrainerLauncher
             _proc = null;
         }
     }
+    public static System.Collections.IEnumerator WaitForTrainerPort(int port, float timeoutSeconds = 20f)
+    {
+        float start = Time.realtimeSinceStartup;
+
+        while (Time.realtimeSinceStartup - start < timeoutSeconds)
+        {
+            if (IsPortOpen("127.0.0.1", port, 100))
+            {
+                Debug.Log($"Trainer port {port} is open.");
+                yield break;
+            }
+
+            yield return new WaitForSecondsRealtime(0.1f);
+        }
+
+        Debug.LogError($"Trainer port {port} did not open within {timeoutSeconds:0.0}s.");
+    }
+
+    static bool IsPortOpen(string host, int port, int timeoutMs)
+    {
+        try
+        {
+            using var client = new TcpClient();
+            var ar = client.BeginConnect(host, port, null, null);
+            bool ok = ar.AsyncWaitHandle.WaitOne(timeoutMs);
+            if (!ok) return false;
+            client.EndConnect(ar);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
 
     static void KillProcessTree(int pid)
     {
