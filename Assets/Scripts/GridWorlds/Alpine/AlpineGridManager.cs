@@ -260,6 +260,11 @@ public class AlpineGridManager : MonoBehaviour
             UpdateUI();
             WriteCsvRow();   // still runs on each tick
         }
+
+        if(timestep >= 1002)
+        {
+            Application.Quit();
+        }
     }
 
 
